@@ -1229,10 +1229,10 @@
   resolved "https://registry.yarnpkg.com/@vercel/ncc/-/ncc-0.24.1.tgz#3ea2932c85ba87f4de6fe550d60e1bf5c005985e"
   integrity sha512-r9m7brz2hNmq5TF3sxrK4qR/FhXn44XIMglQUir4sT7Sh5GOaYXlMYikHFwJStf8rmQGTlvOoBXt4yHVonRG8A==
 
-"@videndum/utilities@^1.0.0-alpha.1":
-  version "1.0.0-alpha"
-  resolved "https://registry.yarnpkg.com/@videndum/utilities/-/utilities-1.0.0-alpha.tgz#76cfea9127112a1091ff224106f987dcecaa65df"
-  integrity sha512-ZO71bLJ3CHSD1P3GC8u151MUreqLJp3McT5FAmFLU5zVyRpoEgO+Ghgz8f8OgdokdGH/IynFc+XuS+wVXT6HNg==
+"@videndum/utilities@^1.0.0-alpha.2":
+  version "1.0.0-alpha.2"
+  resolved "https://registry.yarnpkg.com/@videndum/utilities/-/utilities-1.0.0-alpha.2.tgz#427848a1626dda8cad54ffd8332f41b68c3dcd6b"
+  integrity sha512-oFNhKp64yLqkfRVqLXmaEsMwHyoJTagY6APVQu6Ou380LSn1S42JCrVB+sTyGS9QzHiQVrnyabj2+eGBD3WyRg==
   dependencies:
     "@google-cloud/logging" "^8.0.8"
     "@sentry/integrations" "^5.27.3"
