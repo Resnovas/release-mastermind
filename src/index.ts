@@ -1,17 +1,26 @@
 import * as core from '@actions/core'
 import * as github from '@actions/github'
-import { Log } from '@videndum/utilities'
+import { Logger, loggingData } from '@videndum/utilities'
 import path from 'path'
-import releaseMastermind from './releaseMastermind'
-const L = new Log({ console: { enabled: false } })
-
-export function log(loggingData: string, type: number) {
-  L.log({ raw: loggingData }, type)
-  if (type == 1) core.debug(loggingData)
-  else if (type < 4) core.info(loggingData)
-  else if (type == 4) core.warning(loggingData)
-  else if (type < 7) core.error(loggingData)
-  else core.setFailed(loggingData)
+import releaseMastermind from './action'
+const L = new Logger({
+  console: { enabled: false },
+  sentry: {
+    enabled: true,
+    config: {
+      dsn:
+        'https://3ed727f54ce94ff7aca190b01eb17caa@o237244.ingest.sentry.io/5546354'
+    }
+  }
+})
+export function log(loggingData: loggingData) {
+  L.log(loggingData)
+  const type = Number(loggingData.name) / 100
+  if (type == 1) core.debug(loggingData.message)
+  else if (type < 4) core.info(loggingData.message)
+  else if (type == 4) core.warning(loggingData.message)
+  else if (type < 7) core.error(loggingData.message)
+  else core.setFailed(loggingData.message)
 }
 
 let local: any = undefined
@@ -32,6 +41,13 @@ const { GITHUB_WORKSPACE = '' } = process.env
  * @since 1.0.0
  */
 async function run() {
+  if (dryRun)
+    log(
+      new loggingData(
+        '300',
+        `Release Mastermind is running in local dryrun mode. No Actions will be applyed`
+      )
+    )
   const configInput = JSON.parse(
     core.getInput('configJSON') === '' ? '{}' : core.getInput('configJSON')
   )
@@ -55,11 +71,15 @@ async function run() {
     showLogs,
     dryRun
   }
-  const token = core.getInput('TOKEN')
   const action = new releaseMastermind(new github.GitHub(GITHUB_TOKEN), options)
   action.run().catch(err => {
-    log(`Label Mastermind did not complete due to error: ${err}`, 8)
-    throw err
+    log(
+      new loggingData(
+        '800',
+        `Release Mastermind did not complete due to error:`,
+        err
+      )
+    )
   })
 }
 run()
