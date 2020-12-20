@@ -1,42 +1,28 @@
 import * as core from '@actions/core'
-import { GitHub } from '@actions/github'
+import { loggingData } from '@videndum/utilities'
 import { log } from '..'
-import { pullRequestsAPI } from '../api'
-import { Condition } from '../conditions'
-import evaluator, { ConditionSetType } from '../conditions/evaluator'
-import {
-  Config,
-  PRContext,
-  pullRequestConfig,
-  release,
-  version
-} from '../types'
-import { utils } from '../utils'
-import { semantic } from './helper/semantic'
+import { Config, PullRequestConfig, Release, Runners } from '../../types'
+import { CurContext, PRContext } from '../conditions'
+import { evaluator } from '../evaluator'
+import { Utils } from '../utils'
+import { Contexts } from './methods'
 
-export class PullRequests {
-  private configs: Config
-  private config: Config['pr']
-  private context: PRContext
-  private newVersion: version = {}
-  private client: GitHub
-  private repo: { owner: string; repo: string }
-
+export class PullRequests extends Contexts {
+  context: PRContext
+  config: PullRequestConfig
   constructor(
-    client: GitHub,
-    repo: { owner: string; repo: string },
+    util: Utils,
+    runners: Runners,
     configs: Config,
-    curContext: PRContext
+    curContext: CurContext,
+    dryRun: boolean
   ) {
-    if (!configs) throw new Error('Cannot construct without configs')
-    if (!configs.pr) throw new Error('Cannot construct without PR config')
-    if (!curContext) throw new Error('Cannot construct without context')
-    this.client = client
-    this.repo = repo
-    this.configs = configs
+    if (curContext.type !== 'pr')
+      throw new loggingData('500', 'Cannot construct without issue context')
+    super(util, runners, configs, curContext, dryRun)
+    this.context = curContext.context
+    if (!configs.pr) throw new loggingData('500', 'Cannot start without config')
     this.config = configs.pr
-    this.context = curContext
-    this.newVersion = curContext.currentVersion
   }
 
   async run(attempt?: number) {
@@ -49,10 +35,16 @@ export class PullRequests {
       enforceConventionsSuccess: boolean = true
     try {
       if (this.config.enforceConventions)
-        enforceConventionsSuccess = await this.enforceConventions(
-          this.config.enforceConventions
-        )
+        enforceConventionsSuccess = await this.conventions.enforce(this)
       if (enforceConventionsSuccess) {
+        if (this.config.labels)
+          await this.applyLabels(this).catch(err => {
+            log(new loggingData('500', 'Error applying labels', err))
+          })
+        if (this.config.assignProject)
+          await this.assignProject(this).catch(err => {
+            log(new loggingData('500', 'Error assigning projects', err))
+          })
         // if (this.config.automaticApprove)
         //   await this.automaticApprove(this.config.automaticApprove)
         // duplicate hotfix
@@ -61,23 +53,28 @@ export class PullRequests {
         // create changelog
         // create release
         // sync remote repositories
+        // if (this.config.syncRemote) await this.syncRemoteRepo(this)
         core.endGroup()
       }
     } catch (err) {
       if (attempt > 3) {
-        log(`Pull Request actions failed. Terminating job.`, 8)
         core.endGroup()
-        throw new Error(`Pull Request actions failed. Terminating job.`)
+        throw log(
+          new loggingData(
+            '800',
+            `Pull Request actions failed. Terminating job.`
+          )
+        )
       }
       log(
-        `Pull Request Actions failed with "${err}", retrying in ${seconds} seconds....`,
-        4
+        new loggingData(
+          '400',
+          `Pull Request Actions failed with "${err}", retrying in ${seconds} seconds....`
+        )
       )
       attempt++
-      let counter = setTimeout(async () => {
-        clearTimeout(counter)
-        this.newVersion = await utils.parseVersion(
-          { client: this.client, repo: this.repo },
+      setTimeout(async () => {
+        this.newVersion = await this.util.versioning.parse(
           this.configs,
           this.config?.ref || this.context.ref
         )
@@ -86,23 +83,19 @@ export class PullRequests {
     }
   }
 
-  automaticApprove(automaticApprove: pullRequestConfig['automaticApprove']) {
+  automaticApprove(automaticApprove: PullRequestConfig['automaticApprove']) {
     if (!automaticApprove || !automaticApprove.conventions)
-      throw new Error('Not Able to automatically approve')
+      throw new loggingData('500', 'Not Able to automatically approve')
     automaticApprove.conventions.forEach(convention => {
       if (!convention.conditions) return
-      if (evaluator(ConditionSetType.pr, convention, this.context.prProps)) {
-        log(`Automatically Approved Successfully`, 2)
+      if (evaluator.call(this, convention, this.context.props)) {
+        log(new loggingData('200', `Automatically Approved Successfully`))
         let body =
           automaticApprove.commentHeader +
           '\n\n Automatically Approved - Will automatically merge shortly! \n\n' +
           automaticApprove.commentFooter
-        pullRequestsAPI.createReview(
-          {
-            client: this.client,
-            IDNumber: this.context.IDNumber,
-            repo: this.repo
-          },
+        this.util.api.pullRequests.reviews.create(
+          this.context.IDNumber,
           body,
           'APPROVE'
         )
@@ -114,80 +107,31 @@ export class PullRequests {
     })
   }
 
-  enforceConventions(
-    enforceConventions: pullRequestConfig['enforceConventions']
-  ) {
-    if (!enforceConventions || !enforceConventions.conventions)
-      throw new Error('No enforceable conventions')
-    let required = 0,
-      successful = 0,
-      failedMessages: string[] = []
-    enforceConventions.conventions.forEach(convention => {
-      if (!convention.conditions) return
-      required++
-      if (convention.conditions == 'semanticTitle') {
-        convention.requires = 1
-        let conditions: Condition[] = []
-        semantic.forEach(pattern => {
-          conditions.push({
-            type: 'titleMatches',
-            pattern: `/^${pattern}(\\(.*\\))?:/i`
-          })
-        })
-        if (convention.contexts) {
-          convention.requires++
-          convention.contexts.forEach(pattern => {
-            conditions.push({
-              type: 'titleMatches',
-              pattern: `/\\(${pattern}\\):/i`
-            })
-          })
-        }
-        convention.failedComment =
-          `Semantic Conditions failed - Please title your PR using one of the valid options: ` +
-          semantic.toString()
-        convention.conditions = conditions
-      }
-      if (evaluator(ConditionSetType.pr, convention, this.context.prProps)) {
-        successful++
-      } else {
-        failedMessages.push(convention.failedComment)
-      }
-    })
-
-    if (required > successful) {
-      failedMessages.forEach(fail => core.setFailed(fail))
-      return false
-    }
-    log(`All conventions successfully enforced. Moving to next step`, 2)
-    return true
-  }
-
-  bumpVersion(labels: release['labels']) {
-    if (!labels) return
+  bumpVersion(labels: Release['labels']) {
+    if (!labels || !this.context.props.labels) return
     if (
       (this.configs.versioning == 'SemVer' ||
         this.configs.versioning == undefined) &&
       this.newVersion.semantic
     ) {
       if (
-        this.context.labels.indexOf(labels.major) !== -1 || labels.breaking
-          ? this.context.labels.indexOf(labels.major) !== -1
+        this.context.props.labels[labels.major] || labels.breaking
+          ? this.context.props.labels[labels.major]
           : true
       ) {
         this.newVersion.semantic.major++
-      } else if (this.context.labels.indexOf(labels.minor) !== -1) {
+      } else if (this.context.props.labels[labels.minor]) {
         this.newVersion.semantic.minor++
-      } else if (this.context.labels.indexOf(labels.patch) !== -1) {
+      } else if (this.context.props.labels[labels.patch]) {
         this.newVersion.semantic.patch++
       }
-      if (this.context.labels.indexOf(labels.prerelease) !== -1) {
+      if (this.context.props.labels[labels.prerelease]) {
         this.newVersion.semantic.prerelease =
           this.newVersion.semantic.prerelease ||
           this.configs.prereleaseName ||
           'prerelease'
       }
-      if (this.context.labels.indexOf(labels.build) !== -1) {
+      if (this.context.props.labels[labels.build]) {
         this.newVersion.semantic.build = +1
       }
       this.newVersion.name = `${this.newVersion.semantic.major}.${
@@ -201,7 +145,7 @@ export class PullRequests {
           ? `+${this.newVersion.semantic.build}`
           : ''
       }`
-      log(`New Version is: ${this.newVersion.name}`, 1)
+      log(new loggingData('100', `New Version is: ${this.newVersion.name}`))
     }
   }
 }
