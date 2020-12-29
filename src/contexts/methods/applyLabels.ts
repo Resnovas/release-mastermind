@@ -11,7 +11,11 @@ export async function applyLabels(this: Issues | PullRequests | Project) {
   )) {
     log(new loggingData('100', `Label: ${labelID}`))
 
-    const shouldHaveLabel = evaluator.call(this, conditionsConfig, this.context.props)
+    const shouldHaveLabel = evaluator.call(
+      this,
+      conditionsConfig,
+      this.context.props
+    )
 
     const labelName = this.configs.labels[labelID]
     if (!labelName)
